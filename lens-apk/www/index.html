@@ -1,0 +1,179 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000"><link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png">
+<title>Lens</title>
+<style>
+:root{--a:#ffd23f}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#fff;font:15px system-ui,sans-serif;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#stage{flex:1;position:relative;overflow:hidden;border-radius:0 0 22px 22px;background:#111}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mir{transform:scaleX(-1)}
+#b{display:none;filter:blur(16px);-webkit-mask-image:radial-gradient(ellipse 40% 34% at 50% 45%,transparent 55%,#000 100%);mask-image:radial-gradient(ellipse 40% 34% at 50% 45%,transparent 55%,#000 100%)}
+body.portrait #b{display:block}
+#top{position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center}
+#top button{background:rgba(0,0,0,.45);border-radius:20px;padding:7px 14px;backdrop-filter:blur(8px)}
+#info{min-width:90px}
+#meter{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:18px;background:#0b0b0f}
+body.audio #meter{display:flex}body.audio video{display:none!important}
+#lvl{width:70%;height:10px;border-radius:6px;background:#222;overflow:hidden}#lvl i{display:block;height:100%;width:0;background:var(--a)}
+#big{font-size:54px;font-weight:200;font-variant-numeric:tabular-nums}
+#modes{display:flex;gap:22px;overflow-x:auto;padding:14px 20px 4px;scrollbar-width:none;justify-content:safe center}
+#modes::-webkit-scrollbar{display:none}
+#modes button{font-size:13px;letter-spacing:.08em;opacity:.55;white-space:nowrap}#modes .on{opacity:1;color:var(--a)}
+#ctl{display:flex;align-items:center;justify-content:space-around;height:104px}
+#ctl>button{width:52px;height:52px;border-radius:14px;background:#222 center/cover;font-size:22px}
+#sh{width:76px!important;height:76px!important;border-radius:50%!important;background:none!important;border:4px solid #fff!important;display:grid;place-items:center}
+#sh i{width:58px;height:58px;border-radius:50%;background:#fff;transition:.2s}
+#sh.rec i{background:#f33;border-radius:10px;width:34px;height:34px}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
+#toast{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 14px;border-radius:16px;opacity:0;transition:.3s;pointer-events:none;white-space:nowrap}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:5}.ov.show{display:flex}
+.card{background:#1a1a1f;width:100%;max-height:75%;overflow:auto;border-radius:22px 22px 0 0;padding:18px 20px calc(20px + env(safe-area-inset-bottom))}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin:14px 0;font-size:14px}.row input{grid-column:1/3;width:100%;accent-color:var(--a)}
+.row b{font-weight:500;color:var(--a)}.note{opacity:.6;font-size:13px}
+.btn{background:#2c2c33;border-radius:12px;padding:10px 16px;margin:4px 6px 4px 0}
+#grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}#grid div{aspect-ratio:1;background:#000 center/cover;display:grid;place-items:center;font-size:12px;border-radius:6px}
+#viewer{align-items:center;flex-direction:column;justify-content:center;background:#000;gap:12px;padding:12px}#viewer .m{max-width:100%;max-height:70%}
+</style></head><body>
+<div id="app">
+ <div id="stage">
+  <video id="v" autoplay playsinline muted></video><video id="b" autoplay playsinline muted></video>
+  <div id="meter"><div id="big">0:00</div><div id="lvl"><i></i></div></div>
+  <div id="top"><button id="qb">4K</button><button id="info"></button><button id="pro">Pro ⚙</button></div>
+  <div id="flash"></div><div id="toast"></div>
+ </div>
+ <div id="modes"></div>
+ <div id="ctl"><button id="gal"></button><button id="sh"><i></i></button><button id="flip">⟲</button></div>
+</div>
+<div class="ov" id="sheet"><div class="card" onclick="event.stopPropagation()"><h3 style="margin:0">Pro controls</h3><div id="man"></div>
+ <label class="note"><input type="checkbox" id="auto"> Also copy every capture to Downloads</label></div></div>
+<div class="ov" id="gview"><div class="card" style="max-height:88%" onclick="event.stopPropagation()"><h3 style="margin:0 0 12px">Library</h3><div id="grid"></div></div></div>
+<div class="ov" id="viewer"></div>
+<script>
+const $=s=>document.querySelector(s),v=$('#v'),bv=$('#b');
+const M=[['ai','AI'],['raw','RAW'],['video','VIDEO'],['slowmo','SLO-MO'],['hyper','HYPERLAPSE'],['portrait','PORTRAIT'],['audio','AUDIO']];
+const Q=[[1280,720,'HD'],[1920,1080,'FHD'],[3840,2160,'4K']],HS=[8,16,32];
+let stream,track,facing='environment',mode='ai',q=2,hs=1,rec,recOn=false,aiF='',aiLabel='',frames=[],hTimer,tI,t0,ac,busy=false;
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.opacity=0,2200)};
+const fmt=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+/* storage */
+const dbp=new Promise(r=>{const o=indexedDB.open('lens',1);o.onupgradeneeded=()=>o.result.createObjectStore('m',{keyPath:'id',autoIncrement:true});o.onsuccess=()=>r(o.result)});
+const all=async()=>{const d=await dbp;return new Promise(r=>{const g=d.transaction('m').objectStore('m').getAll();g.onsuccess=()=>r(g.result.reverse())})};
+const del=async id=>{const d=await dbp;d.transaction('m','readwrite').objectStore('m').delete(id)};
+async function save(blob,kind,name){const d=await dbp;d.transaction('m','readwrite').objectStore('m').add({blob,kind,name,t:Date.now()});if($('#auto').checked)dl(blob,name);toast('Saved '+name);thumb()}
+const CP=()=>window.Capacitor&&window.Capacitor.Plugins||{};
+const b64=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(b)});
+async function dl(b,n){const F=CP().Filesystem;if(F){try{await F.writeFile({path:'Lens/'+n,data:await b64(b),directory:'DOCUMENTS',recursive:true});toast('Saved to Documents/Lens')}catch(e){toast('Save failed')}return}
+ const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),9e3)}
+async function shareIt(it){const P=CP();try{if(P.Filesystem&&P.Share){const r=await P.Filesystem.writeFile({path:it.name,data:await b64(it.blob),directory:'CACHE'});await P.Share.share({files:[r.uri]})}
+ else if(navigator.share)await navigator.share({files:[new File([it.blob],it.name,{type:it.blob.type})]});else toast('Share not supported')}catch(e){}}
+async function thumb(){const l=(await all())[0],g=$('#gal');g.style.backgroundImage='';g.textContent='';if(!l)return;if(l.kind==='photo')g.style.backgroundImage='url('+URL.createObjectURL(l.blob)+')';else g.textContent=l.kind==='audio'?'🎙':'▶'}
+/* camera */
+function stopStream(){stream&&stream.getTracks().forEach(t=>t.stop());stream=track=null;ac&&ac.close().catch(()=>{});ac=null}
+async function start(){
+ stopStream();const [w,h]=Q[q];const isA=mode==='audio';
+ document.body.className=(mode==='portrait'?'portrait ':'')+(isA?'audio':'');
+ try{stream=await navigator.mediaDevices.getUserMedia({
+  video:isA?false:{facingMode:facing,width:{ideal:w},height:{ideal:h},frameRate:{ideal:mode==='slowmo'?240:30}},
+  audio:(mode==='video'||isA)?{echoCancellation:false,noiseSuppression:false,autoGainControl:false}:false})}
+ catch(e){toast('Camera/mic blocked: '+e.name);return}
+ if(!isA){track=stream.getVideoTracks()[0];v.srcObject=bv.srcObject=stream;[v,bv].forEach(e=>e.classList.toggle('mir',facing==='user'));build()}
+ else{$('#man').innerHTML='<p class="note">Manual controls apply to the camera modes.</p>';meter()}
+ info()}
+function info(){const s=track?track.getSettings():{};let t='';
+ if(mode==='hyper')t=HS[hs]+'× speed';else if(mode==='slowmo')t=(Math.round(s.frameRate)||'?')+' fps';else if(mode==='ai')t='AI '+aiLabel;else if(s.width)t=s.width+'×'+s.height;
+ $('#info').textContent=t;$('#qb').textContent=Q[q][2]}
+/* pro controls */
+const CT=[['exposureCompensation','Exposure (EV)'],['iso','ISO'],['exposureTime','Shutter'],['focusDistance','Focus'],['colorTemperature','White balance (K)'],['zoom','Zoom']];
+const ap=o=>track&&track.applyConstraints({advanced:[o]}).catch(()=>{});
+function build(){const p=$('#man');p.innerHTML='';if(!track||!track.getCapabilities)return;
+ const c=track.getCapabilities(),s=track.getSettings();let n=0;
+ CT.forEach(([k,l])=>{const r=c[k];if(!r||r.max===undefined)return;n++;
+  const d=document.createElement('div'),sp=document.createElement('b'),i=document.createElement('input');d.className='row';
+  i.type='range';i.min=r.min;i.max=r.max;i.step=r.step||(r.max-r.min)/100;i.value=s[k]??r.min;
+  const show=()=>sp.textContent=k==='exposureTime'?'1/'+Math.round(1e4/i.value)+' s':(+i.value).toFixed(k==='iso'||k==='colorTemperature'?0:2);
+  i.oninput=()=>{show();const o={[k]:+i.value};if(k==='iso'||k==='exposureTime')o.exposureMode='manual';if(k==='focusDistance')o.focusMode='manual';if(k==='colorTemperature')o.whiteBalanceMode='manual';ap(o)};
+  show();d.innerHTML='<span>'+l+'</span>';d.append(sp,i);p.append(d)});
+ if(!n){p.innerHTML='<p class="note">This phone/browser does not expose manual controls for this camera. Try the back camera in Chrome.</p>';return}
+ const b=document.createElement('button');b.className='btn';b.textContent='Reset to auto';b.onclick=()=>{ap({exposureMode:'continuous',focusMode:'continuous',whiteBalanceMode:'continuous'});setTimeout(build,400)};p.append(b)}
+/* AI scene analysis */
+const sc=document.createElement('canvas');sc.width=sc.height=32;const sx=sc.getContext('2d',{willReadFrequently:true});
+setInterval(()=>{if(mode!=='ai'||!track||v.readyState<2){if(mode!=='ai'){v.style.filter=bv.style.filter='';}return}
+ sx.drawImage(v,0,0,32,32);const d=sx.getImageData(0,0,32,32).data;let m=0,q2=0,n=1024;
+ for(let i=0;i<d.length;i+=4){const y=.299*d[i]+.587*d[i+1]+.114*d[i+2];m+=y;q2+=y*y}m/=n;const sd=Math.sqrt(q2/n-m*m);
+ const b=Math.min(1.45,Math.max(.85,1+(118-m)/255*1.2)),c=Math.min(1.2,Math.max(.95,1+(55-sd)/200));
+ aiF=`brightness(${b.toFixed(2)}) contrast(${c.toFixed(2)}) saturate(1.12)`;v.style.filter=aiF;
+ const l=m<60?'Low light':m>170?'Bright':'Balanced';if(l!==aiLabel){aiLabel=l;info()}},600);
+/* photos */
+async function grab(){try{const ic=new ImageCapture(track),pc=await ic.getPhotoCapabilities();return await ic.takePhoto({imageWidth:pc.imageWidth.max,imageHeight:pc.imageHeight.max,fillLightMode:'off'})}
+ catch(e){const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);return new Promise(r=>c.toBlob(r,'image/jpeg',.97))}}
+async function shoot(){if(busy)return;busy=true;const f=$('#flash');f.style.opacity=.8;setTimeout(()=>f.style.opacity=0,120);
+ try{let blob=await grab();const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  if(mode!=='raw'){const b=await createImageBitmap(blob),c=document.createElement('canvas');c.width=b.width;c.height=b.height;const x=c.getContext('2d');
+   if(mode==='ai'){x.filter=aiF||'none';x.drawImage(b,0,0)}
+   else{x.filter='blur('+Math.round(c.width/110)+'px)';x.drawImage(b,0,0);x.filter='none';
+    const o=document.createElement('canvas');o.width=c.width;o.height=c.height;const y=o.getContext('2d');y.drawImage(b,0,0);y.globalCompositeOperation='destination-in';
+    y.translate(c.width/2,c.height*.45);y.scale(.8,1.1);const g=y.createRadialGradient(0,0,c.height*.2,0,0,c.height*.36);g.addColorStop(0,'#000');g.addColorStop(1,'rgba(0,0,0,0)');y.fillStyle=g;y.fillRect(-c.width,-c.height,c.width*2,c.height*2);x.drawImage(o,0,0)}
+   blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.97))}
+  await save(blob,'photo',(mode==='raw'?'RAW_':mode==='portrait'?'PORTRAIT_':'AI_')+stamp+'.jpg')}
+ catch(e){toast('Capture failed')}busy=false}
+/* recording */
+const vm=()=>['video/mp4;codecs=avc1','video/webm;codecs=vp9,opus','video/webm;codecs=h264,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+const am=()=>['audio/mp4','audio/webm;codecs=opus','audio/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+const ext=m=>m.includes('mp4')?'mp4':'webm';
+const vbr=()=>[8e6,16e6,35e6][q];
+function mk(s,mime,opts){const ch=[];const r=new MediaRecorder(s,{mimeType:mime,...opts});r.ondataavailable=e=>e.data.size&&ch.push(e.data);r.done=new Promise(res=>r.onstop=()=>res(new Blob(ch,{type:mime.split(';')[0]})));return r}
+const stamp=()=>new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+async function toggle(){
+ if(!recOn){recOn=true;$('#sh').classList.add('rec');t0=Date.now();tI=setInterval(()=>{const t=fmt((Date.now()-t0)/1e3);$('#big').textContent=t;if(mode!=='audio')$('#info').textContent='● '+t},250);
+  if(mode==='video'||mode==='slowmo'){rec=mk(stream,vm(),{videoBitsPerSecond:mode==='slowmo'?vbr()*1.5:vbr(),audioBitsPerSecond:256e3});rec.start(1000)}
+  else if(mode==='audio'){rec=mk(stream,am(),{audioBitsPerSecond:256e3});rec.start(1000)}
+  else if(mode==='hyper'){frames=[];const c=document.createElement('canvas'),x=c.getContext('2d');
+   hTimer=setInterval(()=>{if(frames.length>1800)return;const k=Math.min(1,1920/v.videoWidth);c.width=v.videoWidth*k;c.height=v.videoHeight*k;x.drawImage(v,0,0,c.width,c.height);c.toBlob(b=>frames.push(b),'image/jpeg',.88)},HS[hs]/30*1e3)}
+  return}
+ recOn=false;clearInterval(tI);$('#sh').classList.remove('rec');
+ if(mode==='hyper'){clearInterval(hTimer);await wait(300);await render(frames,'HYPER_')}
+ else{rec.stop();const b=await rec.done;const n=stamp();
+  if(mode==='audio')await save(b,'audio','AUDIO_'+n+'.'+ext(am()));
+  else if(mode==='video')await save(b,'video','VIDEO_'+n+'.'+ext(vm()));
+  else await slow(b,n)}
+ info()}
+async function render(fr,pre){if(fr.length<2){toast('Record a bit longer');return}toast('Rendering hyperlapse…');
+ const f0=await createImageBitmap(fr[0]),c=document.createElement('canvas');c.width=f0.width;c.height=f0.height;const x=c.getContext('2d');
+ const r=mk(c.captureStream(30),vm(),{videoBitsPerSecond:vbr()});r.start();
+ for(let i=0;i<fr.length;i++){x.drawImage(await createImageBitmap(fr[i]),0,0);$('#info').textContent='Rendering '+Math.round(i/fr.length*100)+'%';await wait(33)}
+ r.stop();await save(await r.done,'video',pre+stamp()+'.'+ext(vm()))}
+async function slow(raw,n){toast('Creating slow motion…');const fps=track.getSettings().frameRate||30,rate=Math.max(.0625,Math.min(1,30/fps)),p=document.createElement('video');
+ p.muted=true;p.playsInline=true;p.src=URL.createObjectURL(raw);await new Promise(r=>p.onloadedmetadata=r);
+ const c=document.createElement('canvas');c.width=p.videoWidth;c.height=p.videoHeight;const x=c.getContext('2d');
+ const r=mk(c.captureStream(30),vm(),{videoBitsPerSecond:vbr()*1.5});r.start();p.playbackRate=rate;
+ const tick=()=>{x.drawImage(p,0,0,c.width,c.height);if(!p.ended){p.requestVideoFrameCallback?p.requestVideoFrameCallback(tick):requestAnimationFrame(tick)}};
+ p.onended=()=>setTimeout(()=>r.stop(),150);await p.play();tick();
+ const b=await r.done;await save(b,'video','SLOMO_'+Math.round(1/rate)+'x_'+n+'.'+ext(vm()))}
+function meter(){ac=new AudioContext();const a=ac.createAnalyser();a.fftSize=512;ac.createMediaStreamSource(stream).connect(a);const d=new Uint8Array(512),i=$('#lvl i');
+ const f=()=>{if(!ac)return;a.getByteTimeDomainData(d);let m=0;for(const s of d)m=Math.max(m,Math.abs(s-128));i.style.width=Math.min(100,m/90*100)+'%';requestAnimationFrame(f)};f()}
+/* UI */
+const mb=$('#modes');M.forEach(([k,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.m=k;b.onclick=async()=>{if(recOn)return toast('Stop recording first');mode=k;[...mb.children].forEach(c=>c.classList.toggle('on',c===b));b.scrollIntoView({inline:'center',behavior:'smooth'});if(k!=='ai'){v.style.filter=bv.style.filter=''}$('#big').textContent='0:00';await start()};mb.append(b)});
+mb.children[0].classList.add('on');
+$('#sh').onclick=()=>['video','slowmo','hyper','audio'].includes(mode)?toggle():shoot();
+$('#flip').onclick=()=>{if(recOn||mode==='audio')return;facing=facing==='user'?'environment':'user';start()};
+$('#qb').onclick=()=>{if(recOn)return;q=(q+1)%3;start()};
+$('#info').onclick=()=>{if(mode==='hyper'&&!recOn){hs=(hs+1)%3;info()}};
+$('#pro').onclick=()=>$('#sheet').classList.add('show');
+$('#sheet').onclick=()=>$('#sheet').classList.remove('show');
+$('#auto').checked=localStorage.getItem('auto')==='1';$('#auto').onchange=e=>localStorage.setItem('auto',e.target.checked?'1':'0');
+async function lib(){const g=$('#grid');g.innerHTML='';const L=await all();if(!L.length)g.innerHTML='<p class="note">Nothing yet — take something!</p>';
+ L.forEach(it=>{const d=document.createElement('div');if(it.kind==='photo')d.style.backgroundImage='url('+URL.createObjectURL(it.blob)+')';else d.textContent=(it.kind==='audio'?'🎙 ':'▶ ')+it.name.split('_')[0];d.onclick=()=>open(it);g.append(d)});$('#gview').classList.add('show')}
+function open(it){const w=$('#viewer'),u=URL.createObjectURL(it.blob);
+ w.innerHTML=it.kind==='photo'?`<img class=m src="${u}">`:it.kind==='video'?`<video class=m src="${u}" controls autoplay playsinline></video>`:`<audio src="${u}" controls autoplay></audio>`;
+ const bar=document.createElement('div');[['Save to device',()=>dl(it.blob,it.name)],['Share',()=>shareIt(it)],['Delete',async()=>{await del(it.id);w.classList.remove('show');lib();thumb()}],['Close',()=>{w.classList.remove('show');w.innerHTML=''}]]
+ .forEach(([l,f])=>{const b=document.createElement('button');b.className='btn';b.textContent=l;b.onclick=f;bar.append(b)});w.append(bar);w.classList.add('show')}
+$('#gal').onclick=lib;$('#gview').onclick=()=>$('#gview').classList.remove('show');
+navigator.storage&&navigator.storage.persist&&navigator.storage.persist();
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+thumb();start();
+</script></body></html>
